@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../theme/app_colors.dart';
 
 class ProviderSuccessScreen extends StatelessWidget {
   const ProviderSuccessScreen({super.key, this.verificationEmailSent = true});
@@ -21,7 +22,7 @@ class ProviderSuccessScreen extends StatelessWidget {
                 width: 96,
                 height: 96,
                 decoration: const BoxDecoration(
-                  color: navy,
+                  color: AppColors.blue,
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(Icons.check, color: Colors.white, size: 56),
@@ -37,22 +38,24 @@ class ProviderSuccessScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
-              const Text(
-                'تم استلام طلبك بنجاح، وهو بانتظار موافقة الإدارة. يمكنك تسجيل الدخول بعد اعتماد الطلب.',
+              // Step 1: the provider must verify their email first.
+              Text(
+                verificationEmailSent
+                    ? 'أرسلنا رابط تفعيل إلى بريدك الإلكتروني. افتح الرابط لتفعيل حسابك.'
+                    : 'تعذر إرسال رابط التفعيل الآن. سجّل الدخول وستظهر لك خيارات إعادة الإرسال.',
                 textAlign: TextAlign.center,
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 15,
                   color: Colors.black54,
                   height: 1.6,
                 ),
               ),
               const SizedBox(height: 12),
-              Text(
-                verificationEmailSent
-                    ? 'أرسلنا رابط تفعيل البريد الإلكتروني. يرجى التحقق من بريدك الوارد.'
-                    : 'تم حفظ طلبك وهو بانتظار موافقة الإدارة، لكن تعذر إرسال رسالة تفعيل البريد الإلكتروني. يرجى التواصل مع الإدارة للمساعدة.',
+              // Step 2: only verified accounts reach the admin for review.
+              const Text(
+                'بعد التفعيل، يصل طلبك للإدارة للمراجعة، ويمكنك تسجيل الدخول بعد اعتماده.',
                 textAlign: TextAlign.center,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 15,
                   color: Colors.black54,
                   height: 1.6,
@@ -67,7 +70,7 @@ class ProviderSuccessScreen extends StatelessWidget {
                     Navigator.of(context).popUntil((route) => route.isFirst);
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: navy,
+                    backgroundColor: AppColors.blue,
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),

@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../theme/app_theme.dart';
 import '../views/customer/login_screen.dart';
-/// اللوق اوت — زر تسجيل الخروج مع رسالة تأكيد.
-/// ضعه في الـ AppBar أو صفحة الحساب في أي من التطبيقين.
+/// Log out button with a confirmation dialog.
+/// Place it in the AppBar or the account page in either app.
 class LogoutButton extends StatelessWidget {
   const LogoutButton({super.key, required this.role});
 

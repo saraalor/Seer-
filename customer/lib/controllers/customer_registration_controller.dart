@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// CONTROLLER: قواعد التحقق + إنشاء حساب العميل.
+/// CONTROLLER: validation rules and customer account creation.
 class CustomerRegistrationController {
   static const Duration _authTimeout = Duration(seconds: 20);
   static const Duration _firestoreTimeout = Duration(seconds: 15);
@@ -14,7 +14,7 @@ class CustomerRegistrationController {
   // Registration
   // ============================================================
 
-  /// يرجع null عند النجاح، أو رسالة الخطأ عند الفشل.
+  /// Returns null on success, or the error message on failure.
   Future<String?> registerCustomer({
     required String firstName,
     required String lastName,
@@ -27,7 +27,7 @@ class CustomerRegistrationController {
     try {
       debugPrint('1. Starting customer registration...');
 
-      // 1) إنشاء حساب Firebase Auth
+      // 1) Create the Firebase Auth account
       final UserCredential credential = await FirebaseAuth.instance
           .createUserWithEmailAndPassword(
             email: email.trim(),
@@ -41,7 +41,7 @@ class CustomerRegistrationController {
       }
       debugPrint('2. Auth account created: ${createdUser.uid}');
 
-      // 2) حفظ البيانات في Firestore (مع مهلة حتى لا يعلّق التحميل)
+      // 2) Save the profile in Firestore (with a timeout so loading never hangs)
       await FirebaseFirestore.instance
           .collection('customers')
           .doc(createdUser.uid)
@@ -55,7 +55,7 @@ class CustomerRegistrationController {
           .timeout(_firestoreTimeout);
       debugPrint('3. Customer data saved');
 
-      // 3) رسالة التفعيل: فشلها لا يمنع التسجيل
+      // 3) Verification email: if it fails, registration still succeeds
       try {
         await createdUser.sendEmailVerification().timeout(_emailTimeout);
         debugPrint('4. Verification email sent');
@@ -70,7 +70,9 @@ class CustomerRegistrationController {
         case 'email-already-in-use':
           return 'هذا البريد الإلكتروني مسجل مسبقًا.';
         case 'weak-password':
-          return 'كلمة المرور ضعيفة جدًا.';
+        // Sent when the Firebase password policy is set to "Require".
+        case 'password-does-not-meet-requirements':
+          return 'كلمة المرور لا تستوفي الشروط المطلوبة.';
         case 'invalid-email':
           return 'الرجاء إدخال بريد إلكتروني صحيح.';
         case 'network-request-failed':
@@ -95,7 +97,7 @@ class CustomerRegistrationController {
     }
   }
 
-  /// يحذف حساب Auth إذا فشل حفظ بياناته، حتى لا يبقى حساب ناقص.
+  /// Deletes the Auth account if saving its profile failed, so no half-made account is left.
   Future<void> _rollbackUser(User? user) async {
     if (user == null) return;
     try {
@@ -143,19 +145,34 @@ class CustomerRegistrationController {
     return null;
   }
 
-  // شروط كلمة المرور (تُستخدم في التحقق وفي القائمة الحية بالشاشة)
+  // Password rules. They match the Firebase password policy, so the app and
+  // Firebase accept exactly the same passwords. Used by the validator and by
+  // the live checklist under the password field.
   static bool hasMinLength(String p) => p.length >= 8;
-  static bool startsWithUppercase(String p) => RegExp(r'^[A-Z]').hasMatch(p);
+  static bool hasUppercase(String p) => RegExp(r'[A-Z]').hasMatch(p);
+  static bool hasLowercase(String p) => RegExp(r'[a-z]').hasMatch(p);
   static bool hasNumber(String p) => RegExp(r'[0-9]').hasMatch(p);
+
+  /// Special characters Firebase counts as non-alphanumeric. Kept to this
+  /// list so the app never accepts a character Firebase would reject.
+  static const String specialCharacters = r'^$*.[]{}()?"!@#%&/\,><' "'" r':;|_~`';
+  static bool hasSpecialChar(String p) =>
+      p.split('').any(specialCharacters.contains);
 
   static String? validatePassword(String? value) {
     final String v = value ?? '';
     if (v.isEmpty) return 'الرجاء إدخال كلمة المرور';
     if (!hasMinLength(v)) return 'يجب أن تكون كلمة المرور 8 خانات على الأقل';
-    if (!startsWithUppercase(v)) {
-      return 'يجب أن تبدأ كلمة المرور بحرف إنجليزي كبير';
+    if (!hasUppercase(v)) {
+      return 'يجب أن تحتوي كلمة المرور على حرف إنجليزي كبير';
+    }
+    if (!hasLowercase(v)) {
+      return 'يجب أن تحتوي كلمة المرور على حرف إنجليزي صغير';
     }
     if (!hasNumber(v)) return 'يجب أن تحتوي كلمة المرور على رقم';
+    if (!hasSpecialChar(v)) {
+      return 'يجب أن تحتوي كلمة المرور على رمز خاص مثل ! @ # \$';
+    }
     return null;
   }
 
@@ -166,7 +183,7 @@ class CustomerRegistrationController {
   }
 
   // ============================================================
-  // الأرقام العربية -> إنجليزية
+  // Arabic-Indic digits -> Western digits
   // ============================================================
   static String normalizeDigits(String input) {
     const String arabicDigits = '٠١٢٣٤٥٦٧٨٩';

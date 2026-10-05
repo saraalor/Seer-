@@ -37,7 +37,7 @@ class AuthService {
   /// Fires whenever the sign-in state changes (signed in / signed out).
   Stream<User?> get authStateChanges => _auth.authStateChanges();
 
-  /// اللوق ان — تسجيل الدخول بالإيميل وكلمة المرور.
+  /// Log in: signs in with email and password.
   Future<User> logIn({required String email, required String password}) async {
     checkingAccount.value = true; // NEW
     try {
@@ -77,12 +77,12 @@ class AuthService {
     }
   }
 
-  /// اللوق اوت — تسجيل الخروج.
+  /// Log out: signs the user out.
   Future<void> logOut() async {
     await _auth.signOut();
   }
 
-  /// ترسل رابط إعادة تعيين كلمة المرور إلى بريد المستخدم.
+  /// Sends a password reset link to the user's email.
   Future<void> sendPasswordResetEmail(String email) async {
     try {
       await _auth.sendPasswordResetEmail(email: email.trim());
@@ -91,7 +91,7 @@ class AuthService {
     }
   }
 
-  /// ترسل رابط تفعيل الحساب للمستخدم الحالي (يُستخدم بعد التسجيل مباشرة).
+  /// Sends an account verification link to the current user (used right after registration).
   Future<void> sendEmailVerification() async {
     final user = _auth.currentUser;
     if (user == null) {
@@ -101,7 +101,7 @@ class AuthService {
     await user.sendEmailVerification();
   }
 
-  /// حدّث بيانات المستخدم محلياً ثم ارجع true إذا صار الإيميل مفعّل.
+  /// Reloads the user locally, then returns true if the email is now verified.
   Future<bool> refreshEmailVerified() async {
     await _auth.currentUser?.reload();
     return _auth.currentUser?.emailVerified ?? false;

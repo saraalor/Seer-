@@ -180,9 +180,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           if (value == null || value.isEmpty) {
                             return 'أدخل كلمة المرور';
                           }
-                          if (value.length < 8) {
-                            return 'كلمة المرور يجب أن تكون 8 أحرف على الأقل';
-                          }
+                        
                           return null;
                         },
                       ),

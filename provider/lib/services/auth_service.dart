@@ -85,6 +85,11 @@ class AuthService extends ChangeNotifier {
       switch (data?['status']) {
         case 'approved':
           return user;
+        case 'unverified':
+          // Verified the email but never opened the app afterwards, so the
+          // request was not sent yet. Send it now, then treat it as pending.
+          await submitForReviewIfVerified();
+          throw const AuthException('طلب تسجيلك قيد المراجعة من الإدارة.');
         case 'pending':
           throw const AuthException('طلب تسجيلك قيد المراجعة من الإدارة.');
         case 'rejected':
@@ -127,7 +132,9 @@ class AuthService extends ChangeNotifier {
       await _provider(createdUser.uid).set({
         ...profile,
         'email': email.trim(),
-        'status': 'pending',
+        // Stays 'unverified' until the email is verified; only then does it
+        // become 'pending' and appear in the admin app.
+        'status': 'unverified',
         'createdAt': FieldValue.serverTimestamp(),
       });
       profileSaved = true;
@@ -154,6 +161,34 @@ class AuthService extends ChangeNotifier {
       } finally {
         _setAuthenticating(false);
       }
+    }
+  }
+
+  /// Sends the registration request to the admin by moving the provider
+  /// from 'unverified' to 'pending', once their email is verified.
+  /// Any other status is left as it is.
+  Future<void> submitForReviewIfVerified() async {
+    final user = currentUser;
+    if (user == null) return;
+    await user.reload();
+    final fresh = _auth.currentUser;
+    if (fresh == null || !fresh.emailVerified) return;
+    // Refresh the sign-in token so it carries email_verified = true, which
+    // the security rules check before allowing this change.
+    await fresh.getIdToken(true);
+    final ref = _provider(fresh.uid);
+    try {
+      await _firestore.runTransaction((transaction) async {
+        final snapshot = await transaction.get(ref);
+        if (snapshot.data()?['status'] == 'unverified') {
+          transaction.update(ref, {
+            'status': 'pending',
+            'submittedAt': FieldValue.serverTimestamp(),
+          });
+        }
+      });
+    } catch (error) {
+      throw _asAuthException(error);
     }
   }
 
@@ -193,7 +228,9 @@ class AuthService extends ChangeNotifier {
       case 'email-already-in-use':
         return 'هذا البريد الإلكتروني مسجل مسبقًا.';
       case 'weak-password':
-        return 'كلمة المرور ضعيفة جدًا.';
+      // Sent when the Firebase password policy is set to "Require".
+      case 'password-does-not-meet-requirements':
+        return 'كلمة المرور لا تستوفي الشروط المطلوبة.';
       case 'user-disabled':
         return 'هذا الحساب معطّل من قبل الإدارة.';
       case 'user-not-found':

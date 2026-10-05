@@ -26,6 +26,8 @@ class _AuthGateState extends State<AuthGate> {
   User? _user;
   bool _waiting = true;
   bool _authError = false;
+  bool _submittingReview = false;
+  bool _reviewFailed = false;
 
   @override
   void initState() {
@@ -126,6 +128,19 @@ class _AuthGateState extends State<AuthGate> {
         }
         final data = snapshot.data!.data();
         switch (data?['status']) {
+          case 'unverified':
+            // The email is verified (checked above), so send the request to
+            // the admin. The profile stream then shows the 'pending' screen.
+            if (_reviewFailed) {
+              return _status(
+                icon: Icons.wifi_off_rounded,
+                title: 'تعذر إرسال الطلب',
+                message: 'تعذر إرسال طلبك للإدارة. تحقق من الاتصال وحاول مرة أخرى.',
+                retry: () => setState(() => _reviewFailed = false),
+              );
+            }
+            _submitForReview();
+            return const _LoadingScreen();
           case 'approved':
             return _session(
               'approved-${user.uid}',
@@ -158,6 +173,15 @@ class _AuthGateState extends State<AuthGate> {
     );
   }
 
+  /// Runs once at a time; on failure the gate shows a retry screen.
+  void _submitForReview() {
+    if (_submittingReview) return;
+    _submittingReview = true;
+    _auth.submitForReviewIfVerified().catchError((Object _) {
+      if (mounted) setState(() => _reviewFailed = true);
+    }).whenComplete(() => _submittingReview = false);
+  }
+
   // Same look as the registration success screen: navy circle icon,
   // title, message, and full-width actions.
   Widget _status({
@@ -181,7 +205,7 @@ class _AuthGateState extends State<AuthGate> {
                       width: 96,
                       height: 96,
                       decoration: const BoxDecoration(
-                        color: AppColors.navy,
+                        color: AppColors.blue,
                         shape: BoxShape.circle,
                       ),
                       child: Icon(icon, size: 48, color: Colors.white),

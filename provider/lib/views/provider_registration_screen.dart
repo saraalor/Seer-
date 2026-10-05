@@ -1,12 +1,42 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_material_design_icons/flutter_material_design_icons.dart';
 import '../theme/app_colors.dart';
 
 import '../services/auth_service.dart';
+import '../controllers/provider_registration_controller.dart';
 import 'provider_success_screen.dart';
 import '../widgets/plate_number_input.dart';
 import '../widgets/app_snackbar.dart';
+import '../models/lookup_model.dart';
+
+// ============================================================
+// Saudi Phone Input Formatter: accepts Arabic or Western digits, converts
+// them to Western digits, forces a leading 05, and allows at most 10 digits.
+// ============================================================
+class ProviderSaudiPhoneInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    String text = ProviderRegistrationController.normalizeDigits(newValue.text);
+
+    if (text.isEmpty) return const TextEditingValue();
+
+    if (!RegExp(r'^[0-9]+$').hasMatch(text)) return oldValue;
+    if (text[0] != '0') return oldValue;
+    if (text.length >= 2 && text[1] != '5') return oldValue;
+
+    if (text.length > 10) text = text.substring(0, 10);
+
+    return TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+  }
+}
 
 class ProviderRegistrationScreen extends StatefulWidget {
   const ProviderRegistrationScreen({super.key, this.authService});
@@ -38,8 +68,7 @@ class _ProviderRegistrationScreenState
   final _confirmPasswordController = TextEditingController();
   final _nationalIdController = TextEditingController();
   final _licenseNumberController = TextEditingController();
-  final _modelController = TextEditingController();
-  final _yearController = TextEditingController();
+  final _otherModelController = TextEditingController();
   final _otherVehicleTypeController = TextEditingController();
   final _otherBrandController = TextEditingController();
   final _otherColorController = TextEditingController();
@@ -69,50 +98,64 @@ class _ProviderRegistrationScreenState
     {'label': 'أخرى', 'icon': MdiIcons.dotsHorizontal},
   ];
 
-  final List<String> _vehicleBrands = [
-    'تويوتا',
-    'هيونداي',
-    'كيا',
-    'نيسان',
-    'فورد',
-    'شيفروليه',
-    'لكزس',
-    'هوندا',
-    'مازدا',
-    'ميتسوبيشي',
-    'إم جي',
-    'جيلي',
-    'شانجان',
-    'بي واي دي',
-    'أخرى',
-  ];
+  // Brands, models and colors come from Firestore (lookup_data/vehicles),
+  // shared with the customer app. The built-in copy is shown until the
+  // document loads, or if it cannot be read.
+  VehicleLookups _lookups = VehicleLookups.fallback();
 
-  final List<String> _vehicleColors = [
-    'أبيض',
-    'أسود',
-    'فضي',
-    'رمادي',
-    'برتقالي',
-    'أحمر',
-    'أزرق',
-    'كحلي',
-    'بني',
-    'ذهبي',
-    'بيج',
-    'أخضر',
-    'أخرى',
-  ];
+  String? _selectedModel;
+  int? _selectedYear;
+  String? _modelError;
+  String? _yearError;
+
+  /// Next year down to 30 years back, newest first. Built from today's
+  /// date, so it never needs editing.
+  static List<int> get _yearOptions {
+    final int thisYear = DateTime.now().year;
+    return [for (int y = thisYear + 1; y >= thisYear - 30; y--) y];
+  }
+
+  /// [options] without any stored "أخرى", with one "أخرى" added at the end.
+  static List<String> _withOther(List<String> options) => [
+        for (final option in options)
+          if (option != kOtherOption) option,
+        kOtherOption,
+      ];
+
+  List<String> get _brandOptions => _withOther(_lookups.brands);
+  List<String> get _colorOptions => _withOther(_lookups.colors);
+
+  /// The models of the chosen brand. Empty until a brand is chosen; a
+  /// typed-in brand has no list, so its model is typed too.
+  List<String> get _modelOptions {
+    final String? brand = _selectedBrand;
+    if (brand == null) return const [];
+    if (brand == kOtherOption) return const [kOtherOption];
+    return _withOther(_lookups.models[brand] ?? const []);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLookups();
+  }
+
+  Future<void> _loadLookups() async {
+    final VehicleLookups lookups = await LookupModel().getVehicleLookups();
+    if (!mounted) return;
+    setState(() => _lookups = lookups);
+  }
 
   // ============================================================
   // Services Offered — nested structure.
   //
-  // كل فئة رئيسية لها id ثابت (يُستخدم بالكود وبقاعدة البيانات)
-  // ولها label (النص المعروض للمستخدم)، وتحتها خيارات فرعية،
-  // كل خيار له id ثابت و label معروض.
+  // Each category has a fixed id (used in code and in the database)
+  // and a label (the text shown to the user), with sub-options under it;
+  // each option also has a fixed id and a displayed label.
   //
-  // فصل id عن label يخلي تغيير النص المعروض لاحقًا (ترجمة، تعديل
-  // صياغة...) لا يكسر أي منطق أو بيانات محفوظة سابقًا في Firestore،
-  // لأن الـ id هو المرجع الثابت وليس النص نفسه.
+  // Keeping the id separate from the label means the displayed text can
+  // change later (translation, rewording...) without breaking any logic or
+  // data already saved in Firestore, because the id is the stable reference.
   // ============================================================
 
   final Map<String, Map<String, dynamic>> _serviceCategories = {
@@ -142,10 +185,10 @@ class _ProviderRegistrationScreenState
     },
   };
 
-  // مفاتيح مركّبة بصيغة "categoryId.optionId" (مثال: "battery.activation")
-  // بدل تخزين النص العربي نفسه، عشان:
-  // 1) ما يصير تصادم لو تكرر نفس النص بفئتين مختلفتين.
-  // 2) ثبات المرجع حتى لو تغيّر النص المعروض لاحقًا.
+  // Composite keys in the form "categoryId.optionId" (e.g. "battery.activation")
+  // instead of the Arabic text itself, so that:
+  // 1) the same text in two different categories never collides.
+  // 2) the reference stays stable even if the displayed text changes later.
   final Set<String> _selectedServices = {};
 
   String _optionKey(String categoryId, String optionId) =>
@@ -161,8 +204,7 @@ class _ProviderRegistrationScreenState
     _confirmPasswordController.dispose();
     _nationalIdController.dispose();
     _licenseNumberController.dispose();
-    _modelController.dispose();
-    _yearController.dispose();
+    _otherModelController.dispose();
     _otherVehicleTypeController.dispose();
     _otherBrandController.dispose();
     _otherColorController.dispose();
@@ -249,6 +291,94 @@ class _ProviderRegistrationScreenState
     );
   }
 
+  // ---------- Live requirement checklist (password / phone / id) ----------
+
+  Widget _requirementRow(String text, bool valid) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        children: [
+          Icon(
+            valid ? Icons.check_circle : Icons.cancel,
+            size: 16,
+            color: valid ? Colors.green : AppColors.secondaryText,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            text,
+            style: TextStyle(
+              fontSize: 12,
+              color: valid ? Colors.green : AppColors.secondaryText,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _passwordRequirements() {
+    final String p = _passwordController.text;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, right: 4, left: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _requirementRow(
+            '8 خانات على الأقل',
+            ProviderRegistrationController.hasMinLength(p),
+          ),
+          _requirementRow(
+            'حرف إنجليزي كبير (A-Z)',
+            ProviderRegistrationController.hasUppercase(p),
+          ),
+          _requirementRow(
+            'حرف إنجليزي صغير (a-z)',
+            ProviderRegistrationController.hasLowercase(p),
+          ),
+          _requirementRow(
+            'رقم واحد على الأقل',
+            ProviderRegistrationController.hasNumber(p),
+          ),
+          _requirementRow(
+            'رمز خاص مثل ! @ # \$',
+            ProviderRegistrationController.hasSpecialChar(p),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _phoneRequirements() {
+    final String p = ProviderRegistrationController.normalizeDigits(
+      _phoneController.text,
+    );
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, right: 4, left: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _requirementRow('يبدأ بـ 05', p.startsWith('05')),
+          _requirementRow('10 خانات فقط', p.length == 10),
+        ],
+      ),
+    );
+  }
+
+  Widget _nationalIdRequirements() {
+    final String v = ProviderRegistrationController.normalizeDigits(
+      _nationalIdController.text,
+    );
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, right: 4, left: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _requirementRow('10 خانات فقط', v.length == 10),
+        ],
+      ),
+    );
+  }
+
   // Section Card
 
   Widget _sectionCard({required String title, required List<Widget> children}) {
@@ -260,9 +390,9 @@ class _ProviderRegistrationScreenState
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppColors.cardBorder),
       ),
-      // Material(type: MaterialType.transparency) يعطي أقرب Material
-      // ancestor للعناصر التفاعلية (InkWell/CheckboxListTile) داخل
-      // هالكرت، عشان تأثير اللمس (ripple) والخلفية يرسمهم صح.
+      // Material(type: MaterialType.transparency) gives the interactive
+      // widgets in this card (InkWell/CheckboxListTile) a nearby Material
+      // ancestor, so the touch ripple and background are drawn correctly.
       child: Material(
         type: MaterialType.transparency,
         child: Column(
@@ -322,21 +452,29 @@ class _ProviderRegistrationScreenState
     return LayoutBuilder(
       builder: (context, constraints) {
         return DropdownMenu<String>(
+          // Rebuilt when the Firestore lists arrive.
+          key: ObjectKey(_lookups),
           width: constraints.maxWidth,
           initialSelection: _selectedBrand,
           hintText: 'اختر الماركة',
+          menuHeight: 320,
           errorText: _brandError,
           inputDecorationTheme: _dropdownTheme(),
-          dropdownMenuEntries: _vehicleBrands.map((brand) {
+          dropdownMenuEntries: _brandOptions.map((brand) {
             return DropdownMenuEntry<String>(value: brand, label: brand);
           }).toList(),
           onSelected: (value) {
             setState(() {
               _selectedBrand = value;
               _brandError = null;
-              if (value != 'أخرى') {
+              if (value != kOtherOption) {
                 _otherBrandController.clear();
               }
+              // A new brand has its own models, so the model starts over.
+              // A typed-in brand can only have a typed-in model.
+              _selectedModel = value == kOtherOption ? kOtherOption : null;
+              _otherModelController.clear();
+              _modelError = null;
             });
           },
         );
@@ -350,12 +488,14 @@ class _ProviderRegistrationScreenState
     return LayoutBuilder(
       builder: (context, constraints) {
         return DropdownMenu<String>(
+          key: ObjectKey(_lookups),
           width: constraints.maxWidth,
           initialSelection: _selectedColor,
           hintText: 'اختر اللون',
+          menuHeight: 320,
           errorText: _colorError,
           inputDecorationTheme: _dropdownTheme(),
-          dropdownMenuEntries: _vehicleColors.map((color) {
+          dropdownMenuEntries: _colorOptions.map((color) {
             return DropdownMenuEntry<String>(value: color, label: color);
           }).toList(),
           onSelected: (value) {
@@ -365,6 +505,67 @@ class _ProviderRegistrationScreenState
               if (value != 'أخرى') {
                 _otherColorController.clear();
               }
+            });
+          },
+        );
+      },
+    );
+  }
+
+  // Model Dropdown
+
+  Widget _modelDropdown() {
+    final List<String> options = _modelOptions;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return DropdownMenu<String>(
+          // Rebuilt when the brand or the Firestore lists change, so the
+          // list and the selection always belong to the chosen brand.
+          key: ValueKey((_selectedBrand, _lookups)),
+          width: constraints.maxWidth,
+          enabled: options.isNotEmpty,
+          initialSelection: _selectedModel,
+          hintText:
+              _selectedBrand == null ? 'اختر الماركة أولاً' : 'اختر الموديل',
+          menuHeight: 320,
+          errorText: _modelError,
+          inputDecorationTheme: _dropdownTheme(),
+          dropdownMenuEntries: options.map((model) {
+            return DropdownMenuEntry<String>(value: model, label: model);
+          }).toList(),
+          onSelected: (value) {
+            setState(() {
+              _selectedModel = value;
+              _modelError = null;
+              if (value != kOtherOption) {
+                _otherModelController.clear();
+              }
+            });
+          },
+        );
+      },
+    );
+  }
+
+  // Year Dropdown
+
+  Widget _yearDropdown() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return DropdownMenu<int>(
+          width: constraints.maxWidth,
+          initialSelection: _selectedYear,
+          hintText: 'اختر سنة الصنع',
+          errorText: _yearError,
+          inputDecorationTheme: _dropdownTheme(),
+          menuHeight: 320,
+          dropdownMenuEntries: _yearOptions.map((year) {
+            return DropdownMenuEntry<int>(value: year, label: '$year');
+          }).toList(),
+          onSelected: (value) {
+            setState(() {
+              _selectedYear = value;
+              _yearError = null;
             });
           },
         );
@@ -412,14 +613,14 @@ class _ProviderRegistrationScreenState
   }
 
   // ============================================================
-  // يبني نسخة servicesOffered الجاهزة للحفظ في Firestore، كـ map
-  // متداخل: كل فئة فيها label وقائمة options، كل خيار فيه id و
-  // label و enabled (true إذا كان مختار في الفورم).
+  // Builds the servicesOffered value ready to save in Firestore, as a nested
+  // map: each category has a label and a list of options, and each option
+  // has an id, a label and enabled (true when it was picked in the form).
   //
-  // ملاحظة: يحفظ كل الخيارات (المختارة وغير المختارة) مع enabled
-  // flag، بدل ما يحفظ بس المختارة، عشان يسهل لاحقًا معرفة كل
-  // الخيارات المتاحة لهذا المزود وتفعيل/تعطيل أي وحدة منها بدون
-  // إعادة بناء القائمة كاملة.
+  // Note: it saves every option (picked or not) with an enabled flag,
+  // instead of only the picked ones, so it is easy later to see all the
+  // options for this provider and turn any of them on or off without
+  // rebuilding the whole list.
   // ============================================================
 
   Map<String, dynamic> _buildServicesOfferedPayload() {
@@ -467,6 +668,8 @@ class _ProviderRegistrationScreenState
           : null;
       _brandError = _selectedBrand == null ? 'الرجاء اختيار الماركة' : null;
       _colorError = _selectedColor == null ? 'الرجاء اختيار اللون' : null;
+      _modelError = _selectedModel == null ? 'الرجاء اختيار الموديل' : null;
+      _yearError = _selectedYear == null ? 'الرجاء اختيار سنة الصنع' : null;
     });
 
     final bool formValid = _vehicleFormKey.currentState!.validate();
@@ -474,7 +677,9 @@ class _ProviderRegistrationScreenState
     if (!formValid ||
         _selectedVehicleType == null ||
         _selectedBrand == null ||
-        _selectedColor == null) {
+        _selectedColor == null ||
+        _selectedModel == null ||
+        _selectedYear == null) {
       return false;
     }
 
@@ -548,6 +753,10 @@ class _ProviderRegistrationScreenState
           ? _otherColorController.text.trim()
           : (_selectedColor ?? '');
 
+      final String model = _selectedModel == kOtherOption
+          ? _otherModelController.text.trim()
+          : (_selectedModel ?? '');
+
       final Map<String, dynamic> servicesToSave =
           _buildServicesOfferedPayload();
 
@@ -558,14 +767,18 @@ class _ProviderRegistrationScreenState
           'firstName': _firstNameController.text.trim(),
           'lastName': _lastNameController.text.trim(),
           'email': _emailController.text.trim(),
-          'phone': _phoneController.text.trim(),
-          'nationalId': _nationalIdController.text.trim(),
+          'phone': ProviderRegistrationController.normalizeDigits(
+            _phoneController.text.trim(),
+          ),
+          'nationalId': ProviderRegistrationController.normalizeDigits(
+            _nationalIdController.text.trim(),
+          ),
 
           'vehicleType': vehicleType,
           'vehicleBrand': brand,
           'vehicleColor': color,
-          'vehicleModel': _modelController.text.trim(),
-          'vehicleYear': _yearController.text.trim(),
+          'vehicleModel': model,
+          'vehicleYear': '$_selectedYear',
 
           'plateNumberLatin': '${plate.digits} ${plate.englishLetters}',
           'plateNumberArabic': '${plate.digits} ${plate.arabicLetters}',
@@ -700,7 +913,7 @@ class _ProviderRegistrationScreenState
                 'الاسم الأول',
                 TextFormField(
                   controller: _firstNameController,
-                  decoration: _fieldDecoration('محمد'),
+                  decoration: _fieldDecoration(''),
                   textInputAction: TextInputAction.next,
                   validator: (value) {
                     if (value == null || value.trim().isEmpty) {
@@ -717,7 +930,7 @@ class _ProviderRegistrationScreenState
                 'اسم العائلة',
                 TextFormField(
                   controller: _lastNameController,
-                  decoration: _fieldDecoration('العتيبي'),
+                  decoration: _fieldDecoration(''),
                   textInputAction: TextInputAction.next,
                   validator: (value) {
                     if (value == null || value.trim().isEmpty) {
@@ -742,14 +955,15 @@ class _ProviderRegistrationScreenState
               icon: Icons.badge_outlined,
             ),
             textInputAction: TextInputAction.next,
-            validator: (value) {
-              if (value == null || value.trim().isEmpty) {
-                return 'الرجاء إدخال رقم الهوية أو الإقامة';
-              }
-              return null;
-            },
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(10),
+            ],
+            onChanged: (_) => setState(() {}),
+            validator: ProviderRegistrationController.validateNationalId,
           ),
         ),
+        _nationalIdRequirements(),
         const SizedBox(height: 16),
         _labeled(
           'رقم الجوال',
@@ -762,17 +976,12 @@ class _ProviderRegistrationScreenState
               icon: Icons.phone_outlined,
             ),
             textInputAction: TextInputAction.next,
-            validator: (value) {
-              if (value == null || value.trim().isEmpty) {
-                return 'الرجاء إدخال رقم الجوال';
-              }
-              if (value.trim().length < 9) {
-                return 'الرجاء إدخال رقم جوال صحيح';
-              }
-              return null;
-            },
+            inputFormatters: [ProviderSaudiPhoneInputFormatter()],
+            onChanged: (_) => setState(() {}),
+            validator: ProviderRegistrationController.validatePhone,
           ),
         ),
+        _phoneRequirements(),
         const SizedBox(height: 16),
         _labeled(
           'البريد الإلكتروني',
@@ -805,7 +1014,7 @@ class _ProviderRegistrationScreenState
             obscureText: _obscurePassword,
             textDirection: TextDirection.ltr,
             decoration: _fieldDecoration(
-              '8 أحرف على الأقل',
+              '',
               icon: Icons.lock_outline,
               suffix: _eyeToggle(
                 _obscurePassword,
@@ -813,17 +1022,11 @@ class _ProviderRegistrationScreenState
               ),
             ),
             textInputAction: TextInputAction.next,
-            validator: (value) {
-              if (value == null || value.isEmpty) {
-                return 'الرجاء إدخال كلمة المرور';
-              }
-              if (value.length < 8) {
-                return 'يجب أن تكون كلمة المرور 8 أحرف على الأقل';
-              }
-              return null;
-            },
+            onChanged: (_) => setState(() {}),
+            validator: ProviderRegistrationController.validatePassword,
           ),
         ),
+        _passwordRequirements(),
         const SizedBox(height: 16),
         _labeled(
           'تأكيد كلمة المرور',
@@ -840,15 +1043,34 @@ class _ProviderRegistrationScreenState
               ),
             ),
             textInputAction: TextInputAction.done,
-            validator: (value) {
-              if (value == null || value.isEmpty) {
-                return 'الرجاء تأكيد كلمة المرور';
-              }
-              if (value != _passwordController.text) {
-                return 'كلمتا المرور غير متطابقتين';
-              }
-              return null;
-            },
+            validator: (value) => ProviderRegistrationController
+                .validateConfirmPassword(value, _passwordController.text),
+          ),
+        ),
+        const SizedBox(height: 20),
+
+        // Back to login, shown on the first step only.
+        Center(
+          child: RichText(
+            text: TextSpan(
+              style: const TextStyle(fontSize: 14, color: AppColors.navy),
+              children: [
+                const TextSpan(text: 'لديك حساب؟ '),
+                TextSpan(
+                  text: 'سجّل الدخول',
+                  style: const TextStyle(
+                    color: AppColors.blue,
+                    fontWeight: FontWeight.bold,
+                    decoration: TextDecoration.underline,
+                    decorationColor: AppColors.blue,
+                  ),
+                  recognizer: TapGestureRecognizer()
+                    ..onTap = _isLoading
+                        ? null
+                        : () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
           ),
         ),
       ],
@@ -917,49 +1139,26 @@ class _ProviderRegistrationScreenState
           ),
         ],
         const SizedBox(height: 16),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: _labeled(
-                'الموديل',
-                TextFormField(
-                  controller: _modelController,
-                  decoration: _fieldDecoration('مثال: كامري'),
-                  textInputAction: TextInputAction.next,
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'الرجاء إدخال الموديل';
-                    }
-                    return null;
-                  },
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _labeled(
-                'السنة',
-                TextFormField(
-                  controller: _yearController,
-                  keyboardType: TextInputType.number,
-                  decoration: _fieldDecoration('مثال: 2023'),
-                  textInputAction: TextInputAction.next,
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'الرجاء إدخال السنة';
-                    }
-                    final year = int.tryParse(value.trim());
-                    if (year == null || value.trim().length != 4) {
-                      return 'الرجاء إدخال سنة صحيحة';
-                    }
-                    return null;
-                  },
-                ),
-              ),
-            ),
-          ],
-        ),
+        _fieldLabel('الموديل'),
+        _modelDropdown(),
+        if (_selectedModel == kOtherOption) ...[
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _otherModelController,
+            decoration: _fieldDecoration('حدد الموديل'),
+            textInputAction: TextInputAction.next,
+            validator: (value) {
+              if (_selectedModel == kOtherOption &&
+                  (value == null || value.trim().isEmpty)) {
+                return 'الرجاء تحديد الموديل';
+              }
+              return null;
+            },
+          ),
+        ],
+        const SizedBox(height: 16),
+        _fieldLabel('سنة الصنع'),
+        _yearDropdown(),
         const SizedBox(height: 16),
         _fieldLabel('رقم اللوحة'),
         const Text(
@@ -981,14 +1180,25 @@ class _ProviderRegistrationScreenState
           'رقم الرخصة / التصريح',
           TextFormField(
             controller: _licenseNumberController,
+            keyboardType: TextInputType.number,
+            textDirection: TextDirection.ltr,
             decoration: _fieldDecoration(
               'أدخل رقم الرخصة أو التصريح',
               icon: Icons.assignment_outlined,
             ),
             textInputAction: TextInputAction.done,
+            // License numbers are exactly 10 digits.
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(10),
+            ],
             validator: (value) {
-              if (value == null || value.trim().isEmpty) {
+              final v = value?.trim() ?? '';
+              if (v.isEmpty) {
                 return 'الرجاء إدخال رقم الرخصة أو التصريح';
+              }
+              if (v.length != 10) {
+                return 'رقم الرخصة يجب أن يكون 10 أرقام بالضبط';
               }
               return null;
             },
@@ -1180,6 +1390,8 @@ class _ProviderRegistrationScreenState
                             maintainState: true,
                             child: Form(
                               key: _personalFormKey,
+                              autovalidateMode:
+                                  AutovalidateMode.onUserInteraction,
                               child: _personalStep(),
                             ),
                           ),
@@ -1188,6 +1400,8 @@ class _ProviderRegistrationScreenState
                             maintainState: true,
                             child: Form(
                               key: _vehicleFormKey,
+                              autovalidateMode:
+                                  AutovalidateMode.onUserInteraction,
                               child: _vehicleStep(),
                             ),
                           ),

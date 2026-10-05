@@ -3,7 +3,7 @@ import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/logout_button.dart';
 
-/// صفحة بسيطة بعد تسجيل الدخول — استبدلها بالصفحة الرئيسية الفعلية.
+/// Simple page shown after login; replace it with the real home page.
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key, required this.role});
 
