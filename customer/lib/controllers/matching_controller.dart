@@ -1,8 +1,7 @@
-import 'dart:math';
-
+import 'package:geolocator/geolocator.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// Controller: findes every provider who should receive a new request
+/// Controller: finds every provider who should receive a new request
 ///
 /// The request goes to All of them at once, and the first to accept gets it
 
@@ -30,7 +29,8 @@ class MatchingController {
     final nearby = <({String id, double km})>[];
     for (final doc in snapshot.docs) {
       final data = doc.data();
-      if (!offersOption(data['servicesOffered'], categoryId, optionId))continue;
+      if (!offersOption(data['servicesOffered'], categoryId, optionId)){
+        continue;}
 
       final location = readLatLng(data['currentLocation']);
       if (location == null) continue;
@@ -72,14 +72,10 @@ class MatchingController {
     return null;
   }
 
-  /// Straight-line distance is Km between two point (Haversine formula)
+  /// Straight-line distance in km between two points.
+  /// Uses Geolocator.distanceBetween from the geolocator package,
+  /// which returns meters, so we divide by 1000.
   static double distanceKm(double lat1, double lng1, double lat2, double lng2) {
-    double red(double deg) => deg * pi / 180;
-    final dLat = red(lat2 - lat1);
-    final dLng = red(lng2 - lng1);
-    final h =
-        sin(dLat / 2) * sin(dLat / 2) +
-        cos(red(lat1)) * cos(red(lat2)) * sin(dLng / 2) * sin(dLng / 2);
-    return 2 * 6371 * asin(sqrt(h));
+    return Geolocator.distanceBetween(lat1, lng1, lat2, lng2) / 1000;
   }
 }
