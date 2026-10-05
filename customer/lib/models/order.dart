@@ -45,6 +45,8 @@ class ServiceOrder {
     this.pickupLocation,
     this.dropoffLocation,
     this.providerId,
+    this.candidateProviderIds = const [],
+    this.rejectedBy = const [],
   });
  
   final String id;
@@ -93,6 +95,12 @@ class ServiceOrder {
  
   /// TODO(#18): filled in when a provider is matched / accepts.
   final String? providerId;
+
+  /// Every provider who received this request. The fisrt to accept it wins
+  final List<String> candidateProviderIds;
+
+  /// Providers who declined it, so it disappears from their list only.
+  final List<String> rejectedBy;
  
   factory ServiceOrder.fromMap(String id, Map<String, dynamic> map) {
     return ServiceOrder(
@@ -118,6 +126,9 @@ class ServiceOrder {
 pickupLocation: map['pickupLocation'] as GeoPoint?,
 dropoffLocation: map['dropoffLocation'] as GeoPoint?,
       providerId: map['providerId'] as String?,
+      candidateProviderIds:
+        List<String>.from((map['candidateProviderIds'] ?? const []) as List),
+      rejectedBy: List<String>.from((map['rejectedBy'] ?? const [])as List),
     );
   }
  
@@ -143,6 +154,8 @@ dropoffLocation: map['dropoffLocation'] as GeoPoint?,
       'pickupLocation': pickupLocation,
       'dropoffLocation': dropoffLocation,
       'providerId': providerId,
+      'candidateProviderIds': candidateProviderIds,
+      'rejectedBy': rejectedBy,
     };
   }
 }
