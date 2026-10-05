@@ -29,8 +29,9 @@ class MatchingController {
     final nearby = <({String id, double km})>[];
     for (final doc in snapshot.docs) {
       final data = doc.data();
-      if (!offersOption(data['servicesOffered'], categoryId, optionId)){
-        continue;}
+      if (!offersOption(data['servicesOffered'], categoryId, optionId)) {
+        continue;
+      }
 
       final location = readLatLng(data['currentLocation']);
       if (location == null) continue;

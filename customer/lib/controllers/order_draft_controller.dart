@@ -44,6 +44,8 @@ class OrderDraftController extends ChangeNotifier {
   List<Vehicle> vehicles = [];
   bool isLoadingVehicles = true;
   bool isSubmitting = false;
+  /// the id of the order once it is saved, so the next page can follow it
+  String? createdOrderId;
   String? vehiclesError;
  
   ServicePrices prices = ServicePrices.fallback();
@@ -220,7 +222,7 @@ dropoffLocation: needsDropoff ? dropoffLocation : null,
 candidateProviderIds: candidates,
       );
 
-      await _orderModel.createOrder(order);
+      createdOrderId = await _orderModel.createOrder(order);
       return null;
     } catch (e) {
       debugPrint('createOrder failed: $e'); // shows the real Firestore error
