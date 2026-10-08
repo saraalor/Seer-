@@ -46,6 +46,9 @@ class OrderDraftController extends ChangeNotifier {
   bool isSubmitting = false;
   /// the id of the order once it is saved, so the next page can follow it
   String? createdOrderId;
+  /// True when the last submit found no nearby provider (#19),
+  /// so the view can explain it instead of showing a short message.
+  bool noNearbyProviders = false;
   String? vehiclesError;
  
   ServicePrices prices = ServicePrices.fallback();
@@ -179,6 +182,7 @@ String? validate() {
     if (problem != null) return problem;
  
     isSubmitting = true;
+    noNearbyProviders = false;
     notifyListeners();
     try {
       final vehicle = selectedVehicle!;
@@ -193,6 +197,7 @@ String? validate() {
   
       // #19: nobody nearby, so nothing is saved
       if( candidates.isEmpty){
+        noNearbyProviders = true;
         return 'لا يوجد مزود خدمة متاح بالقرب منك حاليًا';
       }
 

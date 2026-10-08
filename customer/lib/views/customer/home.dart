@@ -6,9 +6,12 @@ import 'request_service_page.dart';
 
 /// VIEW: the customer home page.
 class Home extends StatelessWidget {
-  const Home({super.key, required this.uid});
+  const Home({super.key, required this.uid, this.onOrderSent});
 
   final String uid;
+
+  /// Called after an order is sent, so the main page can open the orders tab.
+  final VoidCallback? onOrderSent;
 
   static const _icons = <String, IconData>{
     'battery': Icons.battery_charging_full,
@@ -25,6 +28,7 @@ class Home extends StatelessWidget {
     );
     if (message == null || !context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    onOrderSent?.call();
   }
 
   @override
